@@ -17,8 +17,12 @@ package auto
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/GoogleCloudPlatform/berglas/pkg/berglas"
+	"github.com/GoogleCloudPlatform/berglas/pkg/retry"
+	"github.com/pkg/errors"
+	"google.golang.org/api/googleapi"
 )
 
 func init() {
@@ -34,8 +38,23 @@ func resolve() {
 		return
 	}
 
-	envvars, err := runtimeEnv.EnvVars(ctx)
-	if err != nil {
+	var envvars map[string]string
+	if err := retry.RetryFib(ctx, 1*time.Second, 5, func() error {
+		envvars, err = runtimeEnv.EnvVars(ctx)
+		if err != nil {
+			log.Printf("[ERR] failed to find environment variables: %s", err)
+
+			if terr, ok := errors.Cause(err).(*googleapi.Error); ok {
+				// Do not retry 400-level errors
+				if terr.Code >= 400 && terr.Code <= 499 {
+					return terr
+				}
+			}
+
+			return retry.RetryableError(err)
+		}
+		return nil
+	}); err != nil {
 		log.Printf("[ERR] failed to find environment variables: %s", err)
 		return
 	}
